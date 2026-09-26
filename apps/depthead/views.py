@@ -6,6 +6,7 @@ from django.contrib.auth.decorators import login_required
 from apps.core.decorators import role_required
 from apps.core.models import User, FacultyInvite, OfficeClosure, CollegeAnnouncement, College
 from apps.core.forms import CollegeAnnouncementForm, CollegeDescriptionForm
+from apps.core.services import run_in_background
 from django.contrib import messages
 from .forms import FacultyInviteForm, OfficeClosureForm
 from apps.faculty.models import FacultyProfile, ScheduleEvent
@@ -70,12 +71,19 @@ def invite_faculty(request):
             invite.invited_by = request.user
             invite.used = False
             invite.save()
-            send_faculty_invite_email(invite.email, invite.college)
+            email_queued = False
+            try:
+                email_queued, _ = run_in_background(send_faculty_invite_email, invite.email, invite.college)
+            except Exception:
+                logger.exception('Failed to send faculty invite email to %s', invite.email)
             if is_ajax:
-                return JsonResponse({
+                response = {
                     'success': True,
                     'message': f"Invitation created for {invite.email}.",
-                }, status=201)
+                }
+                if email_queued:
+                    response['email_queued'] = True
+                return JsonResponse(response, status=201)
             messages.success(request, f"Invitation created for {invite.email}.")
         else:
             if is_ajax:
@@ -100,13 +108,18 @@ def remove_faculty(request, user_id):
         name = faculty_user.get_full_name() or faculty_user.username
         email = faculty_user.email
         faculty_user.delete()
+        email_queued = False
         email_sent = True
         try:
-            send_faculty_removed_email(email, name)
+            email_queued, _ = run_in_background(send_faculty_removed_email, email, name)
         except Exception:
             email_sent = False
             logger.exception("Failed to send faculty removal email to %s", email)
-        return JsonResponse({'success': True, 'message': f"{name} removed.", 'email_sent': email_sent})
+        response = {'success': True, 'message': f"{name} removed."}
+        if email_queued:
+            response['email_queued'] = True
+        response['email_sent'] = None if email_queued else email_sent
+        return JsonResponse(response)
     return JsonResponse({'success': False, 'error': 'Invalid request method.'}, status=405)
 
 
@@ -240,20 +253,31 @@ def upload_faculty_schedule(request, faculty_id):
         faculty.schedule_last_updated_at = updated_at
         faculty.save(update_fields=['schedule_last_updated_at'])
 
+    email_queued = False
     email_sent = False
     try:
-        email_sent = send_schedule_uploaded_email(faculty.user, events, request.user)
+        email_queued, send_result = run_in_background(
+            send_schedule_uploaded_email,
+            faculty.user,
+            events,
+            request.user,
+        )
+        if not email_queued:
+            email_sent = send_result
     except Exception:
         logger.exception('Failed to send schedule upload email for faculty %s', faculty.faculty_id)
 
-    return JsonResponse({
+    response = {
         'message': f'Schedule uploaded for {faculty.user.get_full_name() or faculty.user.username}. {len(events)} row(s) added.',
-        'email_sent': email_sent,
         'added_count': len(events),
         'last_updated_at': updated_at.isoformat(),
         'preview': [_schedule_csv_row(event) for event in events],
         'events': [_event_json(event) for event in events],
-    }, status=201)
+    }
+    if email_queued:
+        response['email_queued'] = True
+    response['email_sent'] = None if email_queued else email_sent
+    return JsonResponse(response, status=201)
 
 
 @login_required
@@ -413,12 +437,16 @@ def college_settings(request):
             closure.updated_by = request.user
             was_closed = OfficeClosure.objects.values_list('is_closed', flat=True).get(pk=closure.pk)
             closure.save()
+            email_queued = False
             if not was_closed and closure.is_closed:
                 try:
-                    send_closure_email_to_faculty(closure)
+                    email_queued, _ = run_in_background(send_closure_email_to_faculty, closure)
                 except Exception:
                     logger.exception('Failed to send closure emails for college %s', closure.college)
-            return JsonResponse({'success': True, 'is_closed': closure.is_closed})
+            response = {'success': True, 'is_closed': closure.is_closed}
+            if email_queued:
+                response['email_queued'] = True
+            return JsonResponse(response)
         errors = ' '.join(
             error for error_list in form.errors.values() for error in error_list
         )
@@ -586,12 +614,13 @@ def create_announcement(request):
         roles={'faculty': ('faculty',), 'students': ('student',), 'both': ('student', 'faculty')}[announcement.audience],
     )
 
+    email_queued = False
     try:
-        send_announcement_email_to_faculty(announcement)
+        email_queued, _ = run_in_background(send_announcement_email_to_faculty, announcement)
     except Exception:
         logger.exception('Failed to send announcement emails for announcement %s', announcement.pk)
 
-    return JsonResponse({
+    response = {
         'success': True,
         'announcement': {
             'message': announcement.message,
@@ -600,7 +629,10 @@ def create_announcement(request):
             'posted_at': announcement.posted_at.strftime('%b %d, %Y'),
             'expiry': announcement.expiry.strftime('%b %d, %Y'),
         }
-    })
+    }
+    if email_queued:
+        response['email_queued'] = True
+    return JsonResponse(response)
 
 
 @login_required

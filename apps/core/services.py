@@ -1,5 +1,9 @@
+import os
 import logging
+from threading import Thread
+
 from .colleges import get_college_label
+from django.db import close_old_connections, transaction
 from django.utils import timezone
 from .models import CollegeAnnouncement, Notification, User
 from django.core.mail import send_mail, EmailMultiAlternatives
@@ -7,6 +11,30 @@ from django.conf import settings
 from django.template.loader import render_to_string
 from django.utils.html import strip_tags
 from django.urls import reverse
+
+
+logger = logging.getLogger(__name__)
+
+
+def run_in_background(func, *args, **kwargs):
+    """Run synchronously except on Render, where the work is queued in a thread."""
+    if os.environ.get('RENDER', '').lower() != 'true':
+        return False, func(*args, **kwargs)
+
+    def start_thread():
+        def run():
+            close_old_connections()
+            try:
+                func(*args, **kwargs)
+            except Exception:
+                logger.exception('Background task %s failed', getattr(func, '__qualname__', func))
+            finally:
+                close_old_connections()
+
+        Thread(target=run, daemon=True).start()
+
+    transaction.on_commit(start_thread)
+    return True, None
 
 
 def create_notification(recipient, notification_type, title, message, url=''):
@@ -64,9 +92,18 @@ def notify_faculty_status_subscribers(faculty, status):
     for subscription in subscriptions:
         if subscription.student.email:
             try:
-                send_faculty_status_email(subscription.student, faculty_name, status_label, url)
+                run_in_background(
+                    send_faculty_status_email,
+                    subscription.student,
+                    faculty_name,
+                    status_label,
+                    url,
+                )
             except Exception:
-                pass  #change status regardless if the email notification is successful or not
+                logger.exception(
+                    'Failed to send faculty status email to student %s',
+                    subscription.student_id,
+                )
 
     return notifications
 
@@ -189,9 +226,6 @@ def send_depthead_deactivated_email(user):
         {'name': user.get_full_name() or user.username},
         [user.email],
     )
-
-logger = logging.getLogger(__name__)
-
 
 def _email_college_faculty(college, subject, template, context):
     if not college:

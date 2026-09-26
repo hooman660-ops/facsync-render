@@ -1,6 +1,7 @@
 import csv
 import io
 import json
+import logging
 import re
 from datetime import date, time
 
@@ -15,7 +16,7 @@ from django.shortcuts import get_object_or_404, redirect, render
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 from django.views.decorators.csrf import csrf_protect
-from apps.core.services import create_notification, get_active_announcements
+from apps.core.services import create_notification, get_active_announcements, run_in_background
 from django.http import JsonResponse
 from django.utils import timezone
 
@@ -48,6 +49,8 @@ from .models import (
     ScheduleEvent,
     WalkInQueue,
 )
+
+logger = logging.getLogger(__name__)
 
 
 SCHEDULE_CSV_HEADERS = [
@@ -779,15 +782,23 @@ def api_walk_in_detail(request, queue_id):
         queue.notified_at = queue.notified_at or timezone.now()
         queue.faculty_note = str(payload.get('faculty_note') or queue.faculty_note or '').strip()
         queue.save(update_fields=['status', 'notified_at', 'faculty_note'])
+        email_queued = False
         if queue.user.email:
-            send_mail(
-                'Please enter the faculty office',
-                f'{queue.faculty} is ready to see you. Please enter the office now.',
-                settings.DEFAULT_FROM_EMAIL,
-                [queue.user.email],
-                fail_silently=True,
-            )
-        return JsonResponse(_walk_in_json(queue))
+            try:
+                email_queued, _ = run_in_background(
+                    send_mail,
+                    'Please enter the faculty office',
+                    f'{queue.faculty} is ready to see you. Please enter the office now.',
+                    settings.DEFAULT_FROM_EMAIL,
+                    [queue.user.email],
+                    fail_silently=True,
+                )
+            except Exception:
+                logger.exception('Failed to send walk-in notification email for queue %s', queue.pk)
+        response = _walk_in_json(queue)
+        if email_queued:
+            response['email_queued'] = True
+        return JsonResponse(response)
 
     if action == 'complete':
         if queue.status not in ['waiting', 'called']:
@@ -1242,14 +1253,19 @@ def _consultation_values(payload, existing):
 def _notify_consultation_student(consultation, subject, body):
     """Email a consultation status change to the student when an address exists."""
     if not consultation.user.email:
-        return
-    send_mail(
-        subject,
-        body,
-        getattr(settings, 'DEFAULT_FROM_EMAIL', 'noreply@facsync.local'),
-        [consultation.user.email],
-        fail_silently=True,
-    )
+        return False, None
+    try:
+        return run_in_background(
+            send_mail,
+            subject,
+            body,
+            getattr(settings, 'DEFAULT_FROM_EMAIL', 'noreply@facsync.local'),
+            [consultation.user.email],
+            fail_silently=True,
+        )
+    except Exception:
+        logger.exception('Failed to send consultation email for request %s', consultation.request_id)
+        return False, None
 
 
 @login_required
@@ -1333,14 +1349,18 @@ def api_consultation(request, request_id):
                 ),
                 url='/student/consultation-requests/',
             )
+        email_queued = False
         if new_status in {'declined', 'cancelled'}:
-            _notify_consultation_student(
+            email_queued, _ = _notify_consultation_student(
                 consultation,
                 f'FacSync consultation {new_status}',
                 f'Your consultation request {consultation.request_id} with '
                 f'{consultation.faculty} was {new_status}.',
             )
-        return JsonResponse(_consultation_json(consultation))
+        response = _consultation_json(consultation)
+        if email_queued:
+            response['email_queued'] = True
+        return JsonResponse(response)
 
     if request.method == 'PATCH':
         if consultation.status != 'approved':
@@ -1395,13 +1415,16 @@ def api_consultation(request, request_id):
             'status', 'google_event_id', 'google_calendar_id',
             'calendar_sync_status', 'calendar_sync_error',
         ])
-        _notify_consultation_student(
+        email_queued, _ = _notify_consultation_student(
             consultation,
             'FacSync consultation cancelled',
             f'Your consultation request {consultation.request_id} with '
             f'{consultation.faculty} was cancelled.',
         )
-        return JsonResponse(_consultation_json(consultation))
+        response = _consultation_json(consultation)
+        if email_queued:
+            response['email_queued'] = True
+        return JsonResponse(response)
 
     if request.method == 'GET':
         return JsonResponse(_consultation_json(consultation))
