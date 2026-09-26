@@ -12,8 +12,8 @@ SITE_URL = config('SITE_URL').rstrip('/')
 SESSION_COOKIE_SECURE = True
 CSRF_COOKIE_SECURE = True
 SECURE_SSL_REDIRECT = True
-# Vercel terminates TLS and supplies the original request protocol.
-# Other hosts must ensure their trusted proxy overwrites this header.
+# The trusted reverse proxy terminates TLS and supplies the original protocol.
+# Only enable this when the proxy overwrites the header for incoming requests.
 SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
 SECURE_HSTS_SECONDS = 3600
 SECURE_HSTS_INCLUDE_SUBDOMAINS = False
@@ -21,6 +21,12 @@ SECURE_HSTS_PRELOAD = False
 
 STATIC_URL = '/static/'
 STATIC_ROOT = BASE_DIR / 'staticfiles'
+STORAGES = {
+    'default': {'BACKEND': 'django.core.files.storage.FileSystemStorage'},
+    'staticfiles': {
+        'BACKEND': 'whitenoise.storage.CompressedManifestStaticFilesStorage',
+    },
+}
 
 # Check reused connections once per request so dropped idle connections
 # are replaced before executing application queries.
