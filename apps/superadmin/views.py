@@ -1,3 +1,5 @@
+import logging
+
 from django.shortcuts import get_object_or_404, render, redirect
 from django.contrib.auth.decorators import login_required
 from django.contrib.auth import get_user_model
@@ -14,8 +16,12 @@ from apps.core.services import (
     send_depthead_deactivated_email,
     send_faculty_invite_email,
     send_faculty_removed_email,
+    run_in_background,
 )
 from apps.faculty.models import FacultyProfile, ConsultationRequest
+
+logger = logging.getLogger(__name__)
+
 
 @login_required
 @role_required('superadmin')
@@ -26,8 +32,20 @@ def invite_depthead(request):
             invite = form.save(commit=False)
             invite.invited_by = request.user
             invite.save()
-            send_depthead_invite_email(invite.email, invite.college, invite.title)
-            return JsonResponse({'success': True, 'message': f"College Head invitation created for {invite.email}."})
+            email_queued = False
+            try:
+                email_queued, _ = run_in_background(
+                    send_depthead_invite_email,
+                    invite.email,
+                    invite.college,
+                    invite.title,
+                )
+            except Exception:
+                logger.exception('Failed to send department head invite email to %s', invite.email)
+            response = {'success': True, 'message': f"College Head invitation created for {invite.email}."}
+            if email_queued:
+                response['email_queued'] = True
+            return JsonResponse(response)
         errors = ' '.join(
             error for error_list in form.errors.values() for error in error_list
         )
@@ -57,9 +75,15 @@ def edit_depthead(request, user_id):
         depthead.save()
 
         if was_active and new_status == 'deactivated':
-            send_depthead_deactivated_email(depthead)
+            email_queued = False
+            try:
+                email_queued, _ = run_in_background(send_depthead_deactivated_email, depthead)
+            except Exception:
+                logger.exception('Failed to send department head deactivation email to %s', depthead.email)
+        else:
+            email_queued = False
 
-        return JsonResponse({
+        response = {
             'success': True,
             'message': f"Updated {depthead.username}.",
             'depthead': {
@@ -71,7 +95,10 @@ def edit_depthead(request, user_id):
                 'status': depthead.account_status,
                 'status_display': depthead.get_account_status_display(),
             }
-        })
+        }
+        if email_queued:
+            response['email_queued'] = True
+        return JsonResponse(response)
     return JsonResponse({'success': False, 'error': 'Invalid request method.'}, status=405)
 
 
@@ -227,12 +254,19 @@ def invite_faculty_superadmin(request):
             invite.invited_by = request.user
             invite.used = False
             invite.save()
-            send_faculty_invite_email(invite.email, invite.college)
+            email_queued = False
+            try:
+                email_queued, _ = run_in_background(send_faculty_invite_email, invite.email, invite.college)
+            except Exception:
+                logger.exception('Failed to send faculty invite email to %s', invite.email)
             if is_ajax:
-                return JsonResponse({
+                response = {
                     'success': True,
                     'message': f"Invitation created for {invite.email}.",
-                }, status=201)
+                }
+                if email_queued:
+                    response['email_queued'] = True
+                return JsonResponse(response, status=201)
             messages.success(request, f"Invitation created for {invite.email}.")
         else:
             errors = ' '.join(
@@ -259,7 +293,14 @@ def remove_faculty_superadmin(request, user_id):
         name = faculty_user.get_full_name() or faculty_user.username
         email = faculty_user.email
         faculty_user.delete()
-        send_faculty_removed_email(email, name)
-        return JsonResponse({'success': True, 'message': f"{name} removed."})
+        email_queued = False
+        try:
+            email_queued, _ = run_in_background(send_faculty_removed_email, email, name)
+        except Exception:
+            logger.exception('Failed to send faculty removal email to %s', email)
+        response = {'success': True, 'message': f"{name} removed."}
+        if email_queued:
+            response['email_queued'] = True
+        return JsonResponse(response)
     return JsonResponse({'success': False, 'error': 'Invalid request method.'}, status=405)
 
