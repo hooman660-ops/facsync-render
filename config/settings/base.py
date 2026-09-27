@@ -179,7 +179,14 @@ SOCIALACCOUNT_LOGIN_ON_GET = True
 ACCOUNT_LOGOUT_ON_GET = True
 AUTH_USER_MODEL = 'core.User'
 SOCIALACCOUNT_ADAPTER = 'apps.core.adapters.FacSyncSocialAdapter'
-EMAIL_BACKEND = config('EMAIL_BACKEND', default='django.core.mail.backends.smtp.EmailBackend')
+if os.environ.get('RENDER', '').lower() == 'true':
+    EMAIL_BACKEND = 'apps.core.email_backends.BrevoEmailBackend'
+else:
+    EMAIL_BACKEND = config(
+        'EMAIL_BACKEND',
+        default='django.core.mail.backends.smtp.EmailBackend',
+    )
+BREVO_API_KEY = config('BREVO_API_KEY', default='')
 EMAIL_HOST = config('EMAIL_HOST', default='smtp.gmail.com')
 EMAIL_PORT = config('EMAIL_PORT', default=587, cast=int)
 EMAIL_USE_TLS = config('EMAIL_USE_TLS', default=True, cast=bool)
