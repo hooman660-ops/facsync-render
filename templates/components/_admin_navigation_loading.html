@@ -1,0 +1,19 @@
+{% load static %}
+<link rel="stylesheet" href="{% static 'css/admin_navigation_loading.css' %}">
+<script defer src="{% static 'js/admin_navigation_loading.js' %}"></script>
+<script type="application/json" id="admin-navigation-destinations">
+{
+  "{% url 'depthead:admin_dashboard' %}": ["Overview", "dashboard"],
+  "{% url 'depthead:admin_faculty' %}": ["Manage Faculty", "table"],
+  "{% url 'depthead:faculty_monitoring' %}": ["Faculty Monitoring", "cards"],
+  "{% url 'depthead:student_behavior' %}": ["Student Behavior", "charts"],
+  "{% url 'depthead:peak_analytics' %}": ["Peak Analytics", "charts"],
+  "{% url 'depthead:faculty_trends' %}": ["Faculty Trends", "charts"],
+  "{% url 'depthead:college_settings' %}": ["Settings", "form"],
+  "{% url 'superadmin:superadmin_dashboard' %}": ["System Overview", "dashboard"],
+  "{% url 'superadmin:manage_colleges' %}": ["Manage Colleges", "table"],
+  "{% url 'superadmin:manage_admins' %}": ["Manage Admins", "table"],
+  "{% url 'superadmin:manage_faculty' %}": ["Manage Faculty", "table"],
+  "{% url 'superadmin:manage_students' %}": ["Manage Students", "table"]
+}
+</script>

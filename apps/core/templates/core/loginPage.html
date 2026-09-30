@@ -19,12 +19,8 @@
                     <p class="brand-label">FacSync</p>
                 </div>
             </div>
-            {% if messages %}
-            {% for message in messages %}
-            {% if forloop.last %}
-            <p style="color: red;">{{ message }}</p>
-            {% endif %}
-            {% endfor %}
+            {% if auth_message %}
+            <p role="alert" style="color: red;">{{ auth_message }}</p>
             {% endif %}
             <form class="login-form">
                 <div class="form-header">

@@ -10,6 +10,7 @@
     <title>FacSync | Faculty Monitoring</title>
     <link rel="stylesheet" href="{% static 'depthead/css/admin_main.css' %}?v=20260903-responsive-nav">
     <link rel="stylesheet" href="{% static 'depthead/css/admin_monitoring.css' %}?v=20260822-monitoring-ui-2">
+    {% include 'components/_admin_navigation_loading.html' %}
 </head>
 
 <body>
@@ -55,9 +56,6 @@
                         </div>
                         <span class="status-badge">{{ item.status_label }}</span>
                     </div>
-                    {% if item.is_inactive %}
-                    <span class="inactive-badge">Inactive — no login in 30+ days</span>
-                    {% endif %}
                     <div class="faculty-card-footer">
                         <span class="status-line"><i></i>Currently {{ item.status_label|lower }}</span>
                         <span class="updated-time">{% if item.updated_at %}{{ item.updated_at|timesince }} ago{% else %}No update yet{% endif %}</span>

@@ -13,6 +13,14 @@ from django.http import JsonResponse
 from django.views.decorators.http import require_http_methods
 from .models import Notification
 from apps.core.colleges import get_college_label
+from django.contrib.messages import get_messages
+
+
+def _auth_message_context(request, page):
+    # Consume all queued messages so unrelated notices cannot leak to later pages.
+    relevant = [message for message in get_messages(request)
+                if f'auth_{page}' in message.tags.split()]
+    return {'auth_message': relevant[-1] if relevant else None}
 
 def active_announcements(request):
     from .services import get_active_announcements
@@ -26,10 +34,10 @@ def terms_of_service(request):
     return render(request, 'core/terms_of_service.html')
 
 def login_page(request):
-    return render(request, 'core/loginPage.html')
+    return render(request, 'core/loginPage.html', _auth_message_context(request, 'login'))
 
 def register_page(request):
-    return render(request, 'core/registerPage.html')
+    return render(request, 'core/registerPage.html', _auth_message_context(request, 'register'))
 
 STATUS_DISPLAY_MAP = {
     'not_set': ('not-set', 'status-not-set'),
